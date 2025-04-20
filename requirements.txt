@@ -4,3 +4,4 @@ requests
 groq
 pydantic
 python-dotenv
+reportlab

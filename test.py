@@ -286,7 +286,7 @@ class PDFGenerator:
         else:
             return "Project Requirements Document"
     
-    def parse_and_add_content(self, content):
+    def parse_markdown_content(self, content):
         """Parse the content and add it to the story with proper formatting"""
         # First extract main sections using regex
         sections = self.extract_sections(content)
@@ -525,7 +525,7 @@ class PDFGenerator:
         self.story.append(PageBreak())
         
         # Parse and add content
-        self.parse_and_add_content(content)
+        self.parse_markdown_content(content)
         
         # Build the PDF
         self.doc.build(self.story)

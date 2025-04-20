@@ -1,101 +1,62 @@
 from datetime import datetime
-import re
-import uuid
+import re, uuid, json, os
 from dotenv import load_dotenv
-import os
-import json
+from fastapi import FastAPI, Response
 from fastapi.responses import StreamingResponse
-import uvicorn
-from groq import Groq
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from fastapi import FastAPI
-from typing import Optional, List
+from typing import Optional
+from groq import Groq
 from prompt import system_prompt
-from utils import PDFGenerator
+from utils_v2 import PDFGenerator
 
+# Load env variables
 load_dotenv()
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+
+# FastAPI app
 app = FastAPI()
 
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+# CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# LLM client
 client = Groq(api_key=GROQ_API_KEY)
 
-# In-memory storage (you can later replace with Redis or DB)
+# In-memory state
 conversation_state = {}
 
 class RequirementsData(BaseModel):
-    session_id : str
+    session_id: str
+    project_name: str
     requirements: str
 
-# def system_prompt():
-#     return """
-#     You are a smart technical assistant designed to help project managers and clients plan software systems.
-
-#     Behavior:
-#     - First, check if you have all the required information. Do not make assumptions.
-#     - If information is missing, ask ONLY ONE question to get the next important detail.
-#     - If all data is available, suggest multiple technology options for:
-#         * Frontend (e.g., React, Vue)
-#         * Backend (e.g., FastAPI, Node.js)
-#         * Database (e.g., PostgreSQL, MongoDB)
-#     - Also suggest:
-#         * Panels/modules (Admin Panel, User Panel, Vendor Panel)
-#         * User roles and permissions
-#         * Estimated team resources: UI/UX, frontend, backend, DB, QA
-
-#     Respond in one of two formats:
-
-#     1. If more data is needed:
-#     {
-#       "status": "incomplete",
-#       "next_question": "What type of project is it? (e.g., web app, mobile app)"
-#     }
-
-#     2. If everything is ready:
-#     {
-#       "status": "complete",
-#       "suggested_technologies": {
-#         "frontend": [],
-#         "backend": [],
-#         "database": []
-#       },
-#       "panels": [],
-#       "roles": {},
-#       "resource_estimate": {
-#         "ui_ux_designers": 0,
-#         "frontend_devs": 0,
-#         "backend_devs": 0,
-#         "db_engineers": 0,
-#         "qa_testers": 0
-#       },
-#       "follow_up": "Would you like me to proceed based on this information, or do you want to modify anything?"
-#     }
-
-#     Only return valid JSON.
-#     """
-
-
-
-
-
 def extract_json_block(text: str) -> Optional[dict]:
+    """Extract JSON block from text."""
     try:
         match = re.search(r'\{[\s\S]*?\}', text)
         if match:
             return json.loads(match.group())
     except json.JSONDecodeError:
-        pass
-    return None
+        return None
 
+def get_prd_prompt(project_name: str) -> str:
+    return f"""
+You are a senior Product Manager at Codehub LLP. Generate a COMPLETE Product Requirements Document (PRD) for **{project_name}**...
 
-def generate_pdf(content):
-    """Generate a PDF from the given content"""
-    generator = PDFGenerator()
-    return generator.generate(content)
+(keep the rest of your prompt here unchanged)
+    """
 
-
-@app.post("/project_requirements/")
+@app.post("/generate_prd/")
 async def project_requirements(request: RequirementsData):
     session_id = request.session_id
+    project_name = request.project_name
     user_input = request.requirements
 
     # Load or initialize conversation
@@ -136,32 +97,32 @@ async def project_requirements(request: RequirementsData):
         elif status == "ready":
             # Generate full PRD with explicit formatting instructions
             prd_prompt = """
-Based on our conversation, please generate a complete Product Requirements Document (PRD) with the following sections:
+                Based on our conversation, please generate a complete Product Requirements Document (PRD) with the following sections:
 
-1. Introduction
-2. Goals and Objectives
-3. User Personas and Roles
-4. Functional Requirements
-5. Non-Functional Requirements
-6. User Interface (UI) / User Experience (UX) Considerations
-7. Data Requirements
-8. System Architecture & Technical Considerations
-9. Release Criteria & Success Metrics
-10. Timeline & Milestones
-11. Team Structure
-12. User Stories
-13. Cost Estimation
-14. Open Issues & Future Considerations
-15. Appendix
-16. Points Requiring Further Clarification
+                1. Introduction
+                2. Goals and Objectives
+                3. User Personas and Roles
+                4. Functional Requirements
+                5. Non-Functional Requirements
+                6. User Interface (UI) / User Experience (UX) Considerations
+                7. Data Requirements
+                8. System Architecture & Technical Considerations
+                9. Release Criteria & Success Metrics
+                10. Timeline & Milestones
+                11. Team Structure
+                12. User Stories
+                13. Cost Estimation
+                14. Open Issues & Future Considerations
+                15. Appendix
+                16. Points Requiring Further Clarification
 
-For each section:
-- Include the numbered header (e.g., "1. Introduction")
-- Provide detailed content based on our discussion
-- Make sure each section has at least 2-3 paragraphs of relevant content
+                For each section:
+                - Include the numbered header (e.g., "1. Introduction")
+                - Provide detailed content based on our discussion
+                - Make sure each section has at least 2-3 paragraphs of relevant content
 
-Format the document with "Product Requirements Document: [Project Name]" at the top.
-"""
+                Format the document with "Product Requirements Document: [Project Name]" at the top.
+                """
             
             # Add the PRD generation prompt to the conversation
             conversation.append({"role": "user", "content": prd_prompt})
@@ -178,7 +139,7 @@ Format the document with "Product Requirements Document: [Project Name]" at the 
             print("FULL PRD CONTENT:", prd_content[:200])  # Print first 200 chars for debugging
             
             # Generate PDF from the full PRD content
-            pdf_buffer = generate_pdf(prd_content)
+            pdf_buffer = PDFGenerator().generate(prd_content,project_name=request.project_name)
             
             # Extract name
             project_name = "project_requirements"
@@ -203,7 +164,7 @@ Format the document with "Product Requirements Document: [Project Name]" at the 
             }
     else:   
         # This is the original flow - for backward compatibility
-        pdf_buffer = generate_pdf(reply)
+        pdf_buffer = PDFGenerator().generate(reply)
 
         # Extract name
         project_name = "project_requirements"
